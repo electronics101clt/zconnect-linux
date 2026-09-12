@@ -196,6 +196,35 @@ class ConnectionManager:
             self.log("Set PdaNet as preferred network: %s" % ", ".join(changed))
         return changed
 
+    def join_network(self, ssid):
+        """Join a PdaNet hotspot. USER-INITIATED ONLY.
+
+        This is the one association call in the app, and it exists because the
+        PdaNet Windows desktop client has the same thing: click the tray icon,
+        pick "Connect WiFi...", and it joins the phone.
+
+        It must never be called from the polling loop. Automatic joining is what
+        made the old build fight the user -- it would drag them back onto the
+        phone whenever they tried to switch to real WiFi. Driven by a click it
+        cannot do that: nothing happens unless the user asks for it.
+        """
+        self.log("Connecting to %s (requested)" % ssid)
+        rc, out = self._run(["nmcli", "connection", "up", ssid], timeout=45)
+        for line in out.splitlines():
+            if line.strip():
+                self.log("nmcli: %s" % line.strip())
+        if rc != 0:
+            self.log("Trying as a new connection...")
+            rc, out = self._run(["nmcli", "device", "wifi", "connect", ssid], timeout=45)
+            for line in out.splitlines():
+                if line.strip():
+                    self.log("nmcli: %s" % line.strip())
+        if rc == 0:
+            self.log("Joined %s — the tunnel will follow on the next tick." % ssid)
+        else:
+            self.log("ERROR: could not join %s" % ssid)
+        return rc == 0
+
     def leftovers_present(self):
         """Cheap check for anything of ours still installed."""
         return bool(self._resolv_mount_count()

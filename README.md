@@ -149,7 +149,12 @@ The icon colour is the status — no hovering required.
 ./install.sh
 ```
 
-Assumes nothing is installed. It puts everything in place:
+Assumes nothing is installed, and produces a **standalone install** — the app
+is copied to `/usr/local/lib/zconnect` with a launcher at
+`/usr/local/bin/zconnect`, so this source directory is not needed at runtime and
+can be moved or deleted afterwards.
+
+It puts everything in place:
 
 1. apt packages — `python3-gi`, `python3-gi-cairo`, an AppIndicator typelib,
    `network-manager`, `curl`, `unzip`, `iproute2`, `psmisc`, `libnotify-bin`
@@ -159,7 +164,15 @@ Assumes nothing is installed. It puts everything in place:
 4. installs `/etc/sudoers.d/zconnect` (validated with `visudo -c` first) and
    verifies `sudo` no longer prompts
 5. renders the panel icons, installs the menu entry and autostart entry
-6. enables the AppIndicator GNOME extension if one is present
+6. installs the app, the `zconnect` launcher, the menu entry and autostart
+7. enables the AppIndicator GNOME extension if one is present
+
+It also persists the `tun` module via `/etc/modules-load.d/` where `tun` is a
+module rather than builtin, so `/dev/net/tun` is present after a reboot.
+
+Remove everything with `./uninstall.sh`. That stops the app, tears down any
+tunnel, unmounts any stranded `/etc/resolv.conf` overlay, and verifies DNS
+works before it finishes.
 
 The app also runs its own preflight check at startup and shows
 "Setup incomplete — see the log" in the menu if anything is missing.
@@ -170,6 +183,8 @@ Launch "Z Connect" from the Activities menu, or run `./zconnect.sh`. It starts
 at login once installed. Normally there is nothing to do — the tunnel follows
 the network you are on.
 
+- **Connect to &lt;hotspot&gt;** — joins the phone's hotspot, the same as the PdaNet
+  Windows client's "Connect WiFi…". Manual only; see below.
 - **Disconnect tunnel** — manual override; tears the tunnel down but leaves the
   WiFi association alone.
 - **Repair network** — sweeps any leftovers and reports whether normal
@@ -193,8 +208,13 @@ its own comment:
 
 An earlier version of this app was active: it scanned, joined with `nmcli`, and
 dropped the association on teardown. That fights the user — it would pull you
-back onto the phone when you tried to join real WiFi. There are now no
-association-changing calls anywhere in the code; every `nmcli` call is a read.
+back onto the phone when you tried to join real WiFi.
+
+There is exactly **one** association call left, `join_network()`, reached only
+from the "Connect to …" menu item. The PdaNet Windows client has the same thing
+("Connect WiFi…"), and a click cannot fight you the way a polling loop can:
+nothing happens unless you ask for it. The polling loop never calls it, and the
+app never drops an association it did not create.
 
 ### Trigger
 

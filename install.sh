@@ -12,6 +12,8 @@ APP_DIR="$(cd "$(dirname "$0")" && pwd)"
 TUN2PROXY_VERSION="v0.7.19"
 TUN2PROXY_REPO="tun2proxy/tun2proxy"
 INSTALL_BIN="/usr/local/bin/tun2proxy-bin"
+LIB_DIR="/usr/local/lib/zconnect"
+BIN_LINK="/usr/local/bin/zconnect"
 
 say()  { printf '\n\033[1m%s\033[0m\n' "$*"; }
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
@@ -85,7 +87,20 @@ if [ ! -e /dev/net/tun ]; then
     sudo modprobe tun || die "Could not load the 'tun' kernel module."
 fi
 [ -e /dev/net/tun ] || die "/dev/net/tun still missing."
-ok "/dev/net/tun present"
+
+# On some kernels tun is builtin and always present; on others it is a module
+# that a one-shot modprobe would not survive a reboot, leaving the app
+# reporting "setup incomplete" after every restart.
+if [ "$(modinfo tun 2>/dev/null | awk '/^filename:/{print $2}')" != "(builtin)" ]; then
+    if ! grep -qxs tun /etc/modules-load.d/*.conf /etc/modules 2>/dev/null; then
+        echo tun | sudo tee /etc/modules-load.d/zconnect.conf >/dev/null
+        ok "/dev/net/tun present (module, persisted for reboot)"
+    else
+        ok "/dev/net/tun present (module, already persisted)"
+    fi
+else
+    ok "/dev/net/tun present (tun is builtin)"
+fi
 
 # --------------------------------------------------------------------- tun2proxy
 say "3/6  tun2proxy $TUN2PROXY_VERSION"
@@ -144,22 +159,38 @@ sudo -n "$INSTALL_BIN" --version >/dev/null 2>&1 \
     && ok "verified: sudo tun2proxy-bin runs without a password" \
     || warn "sudo still prompts — check /etc/sudoers.d/zconnect"
 
-# -------------------------------------------------------------------- desktop
-say "5/6  Application entry"
+# -------------------------------------------------------------------- install
+say "5/6  Installing the application"
+echo "  Copies the app out of this directory so it is a standalone install --"
+echo "  the source tree is not needed at runtime and can be moved or deleted."
+
+sudo mkdir -p "$LIB_DIR"
+sudo rm -rf "$LIB_DIR/zconnect" "$LIB_DIR/zconnect.py"
+sudo cp -r "$APP_DIR/zconnect" "$APP_DIR/zconnect.py" "$LIB_DIR/"
+sudo find "$LIB_DIR" -name __pycache__ -type d -exec rm -rf {} + 2>/dev/null || true
+sudo chmod -R a+rX "$LIB_DIR"
+
+sudo tee "$BIN_LINK" >/dev/null <<LAUNCHER
+#!/bin/bash
+# Z Connect launcher (installed by install.sh -- do not edit)
+exec python3 $LIB_DIR/zconnect.py "\$@"
+LAUNCHER
+sudo chmod 0755 "$BIN_LINK"
+ok "installed to $LIB_DIR, launcher at $BIN_LINK"
+
 python3 -c "
-import sys; sys.path.insert(0, '$APP_DIR')
+import sys; sys.path.insert(0, '$LIB_DIR')
 from zconnect import icons
 print('  Icons:', icons.ensure_icons())
 "
-chmod +x "$APP_DIR/zconnect.sh" "$APP_DIR/zconnect.py"
 
 mkdir -p ~/.local/share/applications ~/.config/autostart
-sed -e "s|^Exec=.*|Exec=$APP_DIR/zconnect.sh|" \
+sed -e "s|^Exec=.*|Exec=$BIN_LINK|" \
     -e "s|^Icon=.*|Icon=$HOME/.cache/zconnect/icons/zconnect-connected.png|" \
     "$APP_DIR/zconnect.desktop" > ~/.local/share/applications/zconnect.desktop
 cp ~/.local/share/applications/zconnect.desktop ~/.config/autostart/zconnect.desktop
 update-desktop-database ~/.local/share/applications/ 2>/dev/null || true
-ok "menu entry + autostart"
+ok "menu entry + autostart (both point at $BIN_LINK)"
 
 # ------------------------------------------------------------------- gnome ext
 say "6/6  Tray support"
@@ -190,8 +221,11 @@ fi
 
 say "Done"
 cat <<EOF
-  Start now:   $APP_DIR/zconnect.sh
+  Start now:   zconnect
   Or search "Z Connect" in your applications. It also starts at login.
+
+  Installed standalone at $LIB_DIR -- this source directory is no longer
+  needed at runtime. Remove everything with ./uninstall.sh
 
   On connect the app runs:
     sudo tun2proxy-bin --setup --tun tun0 \\

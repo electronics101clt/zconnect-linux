@@ -119,6 +119,12 @@ class ZConnectApp:
         self.item_action.connect("activate", self.on_action)
         menu.append(self.item_action)
 
+        # Mirrors the PdaNet Windows client's "Connect WiFi..." item. Manual
+        # only -- the polling loop never joins anything.
+        self.item_join = Gtk.MenuItem(label="Connect to PdaNet")
+        self.item_join.connect("activate", self.on_join)
+        menu.append(self.item_join)
+
         self.item_rescan = Gtk.MenuItem(label="Re-check now")
         self.item_rescan.connect("activate", self.on_rescan)
         menu.append(self.item_rescan)
@@ -174,6 +180,16 @@ class ZConnectApp:
 
         self.item_action.set_label("Disconnect tunnel")
         self.item_action.set_sensitive(not self.busy and self.state == "connected")
+
+        joinable = self._joinable()
+        if joinable and self.state != "connected":
+            in_range = joinable.signal is not None
+            self.item_join.set_label(
+                "Connect to %s%s" % (joinable.ssid, "" if in_range else " (saved)"))
+            self.item_join.set_sensitive(not self.busy)
+        else:
+            self.item_join.set_label("Connect to PdaNet")
+            self.item_join.set_sensitive(False)
         self.item_rescan.set_sensitive(not self.busy)
 
         if self.config["show_uptime"] and self.state == "connected" and self.started_at:
@@ -191,6 +207,21 @@ class ZConnectApp:
         on. Auto-connect therefore only ever acts on these.
         """
         return [n for n in self.available if n.signal is not None]
+
+    def _joinable(self):
+        """Best PdaNet hotspot to offer joining, or None if already on one.
+
+        Prefers one that is actually broadcasting, but falls back to a saved
+        profile so the menu item stays actionable -- the Windows client simply
+        attempts the connection too. A failed attempt just logs; the danger was
+        only ever in doing this automatically.
+        """
+        if self.manager.on_pdanet()[0]:
+            return None
+        live = [n for n in self.available if n.signal is not None]
+        if live:
+            return live[0]
+        return self.available[0] if self.available else None
 
     def _uptime(self):
         if not self.started_at:
@@ -326,6 +357,14 @@ class ZConnectApp:
         if self.state == "connected":
             self._run_async(self._do_disconnect)
 
+    def on_join(self, _widget):
+        """Explicit user request to join the hotspot."""
+        if self.busy:
+            return
+        target = self._joinable()
+        if target:
+            self._run_async(self._do_join, target.ssid)
+
     def on_rescan(self, _widget):
         if self.busy:
             return
@@ -397,6 +436,10 @@ class ZConnectApp:
         self.last_seen = None
         GLib.idle_add(self._set_state, "idle")
         GLib.idle_add(self.notify, "Z Connect", "Disconnected")
+
+    def _do_join(self, ssid):
+        self.manager.join_network(ssid)
+        GLib.idle_add(self._apply_state)
 
     def _do_repair(self):
         self.log("Repairing network...")
