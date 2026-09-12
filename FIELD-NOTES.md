@@ -59,11 +59,30 @@ sudo sysctl -w net.ipv4.conf.all.rp_filter=2
 
 `rp_filter` on this machine is **2** (loose), not the more common 1.
 
-## Still unverified
+## First live run — verified working 2026-09-12
 
-The tunnel has never been run against the actual phone. Everything else was
-tested standalone: DNS-over-TCP through a stub HTTP CONNECT proxy, the sweep
-recovering a deliberately stranded state, and the passive trigger on real WiFi.
+Against PdaNet+ on the server phone, SSID `DIRECT-30-moto g power-PdaNet`:
+
+```
+wlp3s0             192.168.49.165/24        joined by NetworkManager
+tun0               10.0.0.33 peer 10.0.0.1  created by --setup
+route to 1.1.1.1   dev tun0 src 10.0.0.33   general traffic crosses the tunnel
+route to 192.168.49.1  dev wlp3s0           bypass holds, no proxy loop
+DNS example.com    172.66.147.243           DNS-over-TCP through the proxy
+https://example.com  200
+egress IP          174.238.99.124           the phone's carrier
+```
+
+Note the tunnel address is **not** Android's `10.1.10.1/32` — `--setup`
+chooses its own (`10.0.0.33 peer 10.0.0.1/24`) and points resolv.conf at
+`10.0.0.1`, its own stub, which forwards to `--dns-addr` over TCP. It installs
+`0.0.0.0/1` + `128.0.0.0/1` rather than replacing the default route, which is
+the same "cover everything without touching the real default" approach as
+Android's 16 `addRoute` calls. Nothing should hardcode a tunnel address.
+
+Previously verified standalone: DNS-over-TCP through a stub HTTP CONNECT
+proxy, the sweep recovering a deliberately stranded state, and the passive
+trigger on real WiFi.
 
 ## Other machines
 

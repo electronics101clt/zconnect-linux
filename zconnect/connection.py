@@ -57,6 +57,11 @@ import socket
 import subprocess
 import time
 
+# NOTE: --setup chooses the tunnel's own addressing; we do not set it. Verified
+# on a live run: tun0 = 10.0.0.33 peer 10.0.0.1/24, and /etc/resolv.conf is
+# pointed at 10.0.0.1 (tun2proxy's stub, which forwards to DNS_FALLBACK over
+# TCP). Android's 10.1.10.1/32 is the VpnService.Builder value and does NOT
+# apply here. Nothing below should assume a specific tunnel address.
 TUN_DEVICE = "tun0"
 PDANET_GATEWAY = "192.168.49.1"
 PDANET_SUBNET_PREFIX = "192.168.49."

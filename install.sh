@@ -154,8 +154,9 @@ print('  Icons:', icons.ensure_icons())
 chmod +x "$APP_DIR/zconnect.sh" "$APP_DIR/zconnect.py"
 
 mkdir -p ~/.local/share/applications ~/.config/autostart
-sed "s|^Exec=.*|Exec=$APP_DIR/zconnect.sh|" "$APP_DIR/zconnect.desktop" \
-    > ~/.local/share/applications/zconnect.desktop
+sed -e "s|^Exec=.*|Exec=$APP_DIR/zconnect.sh|" \
+    -e "s|^Icon=.*|Icon=$HOME/.cache/zconnect/icons/zconnect-connected.png|" \
+    "$APP_DIR/zconnect.desktop" > ~/.local/share/applications/zconnect.desktop
 cp ~/.local/share/applications/zconnect.desktop ~/.config/autostart/zconnect.desktop
 update-desktop-database ~/.local/share/applications/ 2>/dev/null || true
 ok "menu entry + autostart"

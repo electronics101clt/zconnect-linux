@@ -23,10 +23,10 @@ with the same settings, so behaviour matches what is already proven there.
 | Engine | `libtun2proxy.so` (JNI) | `tun2proxy-bin` (CLI) |
 | Version | 0.7.19 | 0.7.19 (pinned by `install.sh`) |
 | Tunnel setup | `VpnService.Builder` | `tun2proxy --setup` |
-| Address | `10.1.10.1/32` | same, created by `--setup` |
-| Routes | 16 × `addRoute`, skipping `192.168.0.0/16` | `--bypass 192.168.0.0/16` |
+| Address | `10.1.10.1/32` (explicit) | `--setup` picks its own: `10.0.0.33 peer 10.0.0.1/24` |
+| Routes | 16 × `addRoute`, skipping `192.168.0.0/16` | `0.0.0.0/1` + `128.0.0.0/1`, `--bypass 192.168.0.0/16` |
 | Proxy | `http://192.168.49.1:8000` | same |
-| DNS | `addDnsServer` + `DnsStrategy.OVER_TCP` | `--dns over-tcp --dns-addr 8.8.8.8` |
+| DNS | `addDnsServer` + `DnsStrategy.OVER_TCP` | `--dns over-tcp --dns-addr 8.8.8.8`; resolv.conf points at `10.0.0.1` |
 | MTU | 1500 | 1500 (Linux tun default) |
 
 On connect the app runs:
@@ -51,6 +51,16 @@ for DNS. It had copied Android's 16-entry routing table without the mechanism
 that makes DNS work through it, so the tunnel would come up and name resolution
 would silently fail. Using the same engine as Android removes that whole class
 of divergence.
+
+### Addressing is `--setup`'s, not ours
+
+Android sets the tunnel address explicitly (`addAddress("10.1.10.1", 32)`).
+On Linux `--setup` manages its own: the live tunnel comes up as
+`tun0 10.0.0.33 peer 10.0.0.1/24`, it installs `0.0.0.0/1` + `128.0.0.0/1`
+(the same "cover everything without touching the real default" trick as
+Android's 16 routes), and it points `/etc/resolv.conf` at `10.0.0.1`, its own
+stub, which forwards over TCP to `--dns-addr`. Do not hardcode 10.1.10.1 on
+the Linux side; it is not what runs.
 
 ### What `--setup` does that VpnService did
 
@@ -98,7 +108,7 @@ process exits, which is why the app stops it with `SIGTERM` rather than
 | Phone/Gateway IP | `192.168.49.1` |
 | Proxy Type | HTTP CONNECT (not SOCKS5) |
 | Proxy Port | `8000` |
-| TUN Interface | `tun0` at `10.1.10.1/32` |
+| TUN Interface | `tun0` at `10.0.0.33 peer 10.0.0.1/24` (chosen by `--setup`) |
 | Bypass | `192.168.0.0/16` (the proxy lives there — routing it in would loop) |
 
 ## Tray states
