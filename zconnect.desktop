@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Z Connect
+Comment=PdaNet WiFi Direct Tethering
+Exec=/home/jonathan/zconnect-app/zconnect.sh
+Icon=/home/jonathan/.cache/zconnect/icons/zconnect-connected.png
+Terminal=false
+Categories=Network;Utility;
+Keywords=tether;pdanet;wifi;hotspot;internet;
+StartupNotify=false
+X-GNOME-UsesNotifications=true

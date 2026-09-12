@@ -1,0 +1,18 @@
+# Z Connect - passwordless sudo for tethering operations
+# Installed by install.sh to /etc/sudoers.d/zconnect (mode 0440).
+#
+# Each binary is listed individually and the app invokes them directly by
+# absolute path. Do NOT route these through `sudo bash -c` — a wrapping shell
+# is not covered by these rules and would make the app prompt for a password
+# it has no terminal to read.
+#
+# __USER__ is substituted with the installing user by install.sh.
+
+__USER__ ALL=(ALL) NOPASSWD: /usr/local/bin/tun2proxy-bin
+__USER__ ALL=(ALL) NOPASSWD: /usr/sbin/ip
+__USER__ ALL=(ALL) NOPASSWD: /sbin/ip
+__USER__ ALL=(ALL) NOPASSWD: /usr/sbin/sysctl
+__USER__ ALL=(ALL) NOPASSWD: /sbin/sysctl
+__USER__ ALL=(ALL) NOPASSWD: /usr/bin/killall
+__USER__ ALL=(ALL) NOPASSWD: /usr/bin/umount /etc/resolv.conf
+__USER__ ALL=(ALL) NOPASSWD: /bin/umount /etc/resolv.conf
