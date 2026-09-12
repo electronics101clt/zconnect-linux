@@ -4,10 +4,10 @@ Native Linux tray client for connecting to PdaNet WiFi Direct hotspots.
 
 ## Overview
 
-A GTK3 tray application (AppIndicator / StatusNotifierItem) that finds the
-`DIRECT-*PdaNet*` hotspot published by an Android phone running Z Connect Host,
-joins it, and bridges the machine's traffic through the phone's HTTP CONNECT
-proxy.
+A GTK3 tray application (AppIndicator / StatusNotifierItem). When this machine
+is on a PdaNet WiFi Direct network, it bridges all traffic through the phone's
+HTTP CONNECT proxy; when it is not, it removes everything it installed so normal
+networking works. It never joins or leaves a WiFi network itself.
 
 It runs in the panel only — there is no main window. Clicking the indicator
 gives a normal GTK menu; "Details and activity log…" opens a window with the
@@ -68,10 +68,10 @@ process exits, which is why the app stops it with `SIGTERM` rather than
 │                   GTK3 + AppIndicator3                       │
 ├─────────────────────────────────────────────────────────────┤
 │  app.py         │  scanner.py        │  connection.py        │
-│  - tray + menu  │  - finds DIRECT-   │  - joins WiFi (nmcli) │
-│  - details win  │    *PdaNet* via    │  - runs tun2proxy     │
-│  - state machine│    nmcli           │    --setup            │
-│  - icons.py     │  - live vs saved   │  - preflight checks   │
+│  - tray + menu  │  - reads current   │  - runs tun2proxy     │
+│  - details win  │    SSID + nearby   │    --setup            │
+│  - passive seek │    networks (read- │  - sweep / verify     │
+│  - icons.py     │    only nmcli)     │  - preflight checks   │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -93,7 +93,7 @@ process exits, which is why the app stops it with `SIGTERM` rather than
 
 | Component | Value |
 |-----------|-------|
-| WiFi Direct SSID | `DIRECT-xx-[device]-PdaNet` |
+| SSID match | name contains `pdanet`, any case |
 | Network Subnet | `192.168.49.0/24` |
 | Phone/Gateway IP | `192.168.49.1` |
 | Proxy Type | HTTP CONNECT (not SOCKS5) |
@@ -109,8 +109,8 @@ The icon colour is the status — no hovering required.
 |--------|---------|
 | 🟢 green | Connected (panel shows uptime) |
 | 🟠 amber | Connecting |
-| 🔵 blue | PdaNet hotspot in range, not connected |
-| ⚫ grey | No PdaNet hotspot in range |
+| 🔵 blue | On PdaNet, tunnel starting |
+| ⚫ grey | Not on PdaNet — normal networking, nothing installed |
 | 🔴 red | Connection failed, or setup incomplete |
 
 ## Installation
@@ -137,22 +137,59 @@ The app also runs its own preflight check at startup and shows
 ## Usage
 
 Launch "Z Connect" from the Activities menu, or run `./zconnect.sh`. It starts
-at login once installed.
+at login once installed. Normally there is nothing to do — the tunnel follows
+the network you are on.
 
-- **Connect automatically** (on by default) joins a PdaNet hotspot as soon as
-  one comes in range.
-- **Connect now** joins the strongest hotspot, and will also target a *saved*
-  profile that is not currently broadcasting.
+- **Disconnect tunnel** — manual override; tears the tunnel down but leaves the
+  WiFi association alone.
+- **Repair network** — sweeps any leftovers and reports whether normal
+  networking is back. Use this if the internet looks wrong after a crash.
 - **Quit Z Connect** tears the tunnel down cleanly before exiting.
 
 Settings live in `~/.config/zconnect/config.json`.
 
-### Auto-connect only acts on hotspots in range
+## Passive by design
 
-A saved NetworkManager profile is not proof the phone is nearby. Auto-connect
-only fires on networks returned by a live scan, because trying to join an
-out-of-range profile drops the WiFi you are already on for a connect attempt
-that cannot succeed. Manual "Connect now" can still target a saved profile.
+This app **never joins or leaves a WiFi network.** It reads whatever link is
+already up and builds or destroys the tunnel to match, re-evaluated every 5
+seconds regardless of what happened on previous ticks.
+
+That is ZLauncher's model (`KeepAliveService.seekAndConnectToPdaNet`), quoting
+its own comment:
+
+> This does NOT connect, disconnect, or otherwise touch the WiFi connection
+> itself — no `enableNetwork()`, no `WifiManager` writes at all. WiFi
+> association is entirely WifiManager's business.
+
+An earlier version of this app was active: it scanned, joined with `nmcli`, and
+dropped the association on teardown. That fights the user — it would pull you
+back onto the phone when you tried to join real WiFi. There are now no
+association-changing calls anywhere in the code; every `nmcli` call is a read.
+
+### Trigger
+
+Either signal is enough, and both are re-checked every tick:
+
+| Signal | Source |
+|---|---|
+| Current SSID contains `pdanet` (any case) | `seekAndConnectToPdaNet()` |
+| An interface holds a `192.168.49.x` address | `checkPdaNetGateway()` |
+
+It also refuses to build a tunnel while this machine is itself serving WiFi,
+matching `isWifiHotspotActive()`.
+
+### PdaNet as the primary uplink
+
+Where there is no real WiFi, the phone is the primary connection, not a
+fallback. At startup the app sets `autoconnect=yes` and
+`autoconnect-priority=100` on every saved profile whose name contains "pdanet",
+so NetworkManager reaches for the phone first.
+
+This is *profile preference*, not association — it never brings a connection up
+or down. NetworkManager still decides, and only among networks in range. It
+lives in the app rather than in hand-applied `nmcli` commands so that every
+machine running this code configures itself identically. Disable with
+`"prefer_pdanet": false` in the config file.
 
 ### sudo
 

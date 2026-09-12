@@ -26,7 +26,7 @@ from .connection import (                                    # noqa: E402
 from .scanner import NetworkScanner                          # noqa: E402
 
 APP_ID = "zconnect"
-SCAN_INTERVAL = 3          # seconds, same cadence as the Java build
+SEEK_INTERVAL = 5          # == ZLauncher PDANET_SEEK_INTERVAL_MS
 LOG_LIMIT = 500
 
 CONFIG_DIR = os.path.join(
@@ -55,6 +55,7 @@ class ZConnectApp:
         self.last_seen = None
         self.started_at = 0
         self.signal_pct = None
+        self.current_ssid = None
         self.log_lines = []
         self.running = True
         self.setup_problems = []
@@ -74,7 +75,7 @@ class ZConnectApp:
     # ---------- config ----------
 
     def _load_config(self):
-        defaults = {"auto_connect": True, "show_uptime": True, "notify": True}
+        defaults = {"show_uptime": True, "notify": True, "prefer_pdanet": True}
         try:
             with open(CONFIG_FILE) as fh:
                 defaults.update(json.load(fh))
@@ -112,25 +113,26 @@ class ZConnectApp:
 
         menu.append(Gtk.SeparatorMenuItem())
 
-        self.item_action = Gtk.MenuItem(label="Connect now")
+        # Passive model: no "Connect" item. The tunnel follows the link you
+        # are on. The only manual override is tearing it down.
+        self.item_action = Gtk.MenuItem(label="Disconnect tunnel")
         self.item_action.connect("activate", self.on_action)
         menu.append(self.item_action)
 
-        self.item_rescan = Gtk.MenuItem(label="Scan for networks")
+        self.item_rescan = Gtk.MenuItem(label="Re-check now")
         self.item_rescan.connect("activate", self.on_rescan)
         menu.append(self.item_rescan)
 
         menu.append(Gtk.SeparatorMenuItem())
 
-        self.item_auto = Gtk.CheckMenuItem(label="Connect automatically")
-        self.item_auto.set_active(self.config["auto_connect"])
-        self.item_auto.connect("toggled", self.on_toggle_auto)
-        menu.append(self.item_auto)
-
         self.item_uptime = Gtk.CheckMenuItem(label="Show uptime in panel")
         self.item_uptime.set_active(self.config["show_uptime"])
         self.item_uptime.connect("toggled", self.on_toggle_uptime)
         menu.append(self.item_uptime)
+
+        self.item_repair = Gtk.MenuItem(label="Repair network")
+        self.item_repair.connect("activate", self.on_repair)
+        menu.append(self.item_repair)
 
         self.item_details = Gtk.MenuItem(label="Details and activity log…")
         self.item_details.connect("activate", self.on_details)
@@ -164,23 +166,14 @@ class ZConnectApp:
             summary = "Connected — %s" % (self.manager.network or "PdaNet")
         elif self.state in ("connecting",):
             summary = "Connecting to %s…" % (self.last_seen or "PdaNet")
-        elif live:
-            summary = "%d PdaNet network%s in range" % (
-                len(live), "" if len(live) == 1 else "s"
-            )
-        elif self.available:
-            summary = "No PdaNet in range (%d saved)" % len(self.available)
+        elif self.current_ssid:
+            summary = "On %s — not PdaNet" % self.current_ssid
         else:
             summary = STATE_TEXT[self.state]
         self.item_status.set_label(summary)
 
-        if self.state == "connected":
-            self.item_action.set_label("Disconnect")
-        else:
-            self.item_action.set_label("Connect now")
-        self.item_action.set_sensitive(
-            not self.busy and (self.state == "connected" or bool(self.available))
-        )
+        self.item_action.set_label("Disconnect tunnel")
+        self.item_action.set_sensitive(not self.busy and self.state == "connected")
         self.item_rescan.set_sensitive(not self.busy)
 
         if self.config["show_uptime"] and self.state == "connected" and self.started_at:
@@ -332,11 +325,6 @@ class ZConnectApp:
             return
         if self.state == "connected":
             self._run_async(self._do_disconnect)
-        else:
-            # Manual connect may target a saved network; auto-connect may not.
-            candidates = self._live() or self.available
-            if candidates:
-                self._run_async(self._do_connect, candidates[0].ssid)
 
     def on_rescan(self, _widget):
         if self.busy:
@@ -344,15 +332,16 @@ class ZConnectApp:
         self.log("Manual scan requested")
         self._run_async(self._do_rescan)
 
-    def on_toggle_auto(self, widget):
-        self.config["auto_connect"] = widget.get_active()
-        self._save_config()
-        self.log("Auto-connect %s" % ("enabled" if widget.get_active() else "disabled"))
-
     def on_toggle_uptime(self, widget):
         self.config["show_uptime"] = widget.get_active()
         self._save_config()
         self._apply_state()
+
+    def on_repair(self, _widget):
+        """Sweep leftovers and report whether normal networking is back."""
+        if self.busy:
+            return
+        self._run_async(self._do_repair)
 
     def on_details(self, _widget):
         if self.details is None:
@@ -391,7 +380,7 @@ class ZConnectApp:
     def _do_connect(self, ssid):
         self.last_seen = ssid
         GLib.idle_add(self._set_state, "connecting")
-        ok = self.manager.connect(ssid)
+        ok = self.manager.start_tunnel(ssid)
         if ok:
             self.started_at = time.time()
             GLib.idle_add(self._set_state, "connected")
@@ -409,10 +398,26 @@ class ZConnectApp:
         GLib.idle_add(self._set_state, "idle")
         GLib.idle_add(self.notify, "Z Connect", "Disconnected")
 
+    def _do_repair(self):
+        self.log("Repairing network...")
+        swept = self.manager.sweep()
+        problems = self.manager.verify_restored()
+        if problems:
+            for problem in problems:
+                self.log("STILL BROKEN: %s" % problem)
+            GLib.idle_add(self.notify, "Z Connect",
+                          "Could not fully restore: %s" % problems[0])
+        else:
+            self.log("Network is healthy%s."
+                     % (" (cleaned up %d item(s))" % len(swept) if swept else ""))
+            GLib.idle_add(self.notify, "Z Connect",
+                          "Network restored — you can join normal WiFi")
+        GLib.idle_add(self._apply_state)
+
     def _do_rescan(self):
         self.scanner.rescan()
         time.sleep(1)
-        self.available = self.scanner.scan()
+        self._poll()
         GLib.idle_add(self._apply_state)
 
     def _preflight(self):
@@ -427,6 +432,12 @@ class ZConnectApp:
                           "Setup incomplete — run install.sh")
         else:
             self.log("Setup OK (tun2proxy, sudo, nmcli, /dev/net/tun)")
+            if self.config.get("prefer_pdanet", True):
+                self.manager.ensure_pdanet_preferred()
+            swept = self.manager.sweep()
+            if swept:
+                GLib.idle_add(self.notify, "Z Connect",
+                              "Cleaned up leftovers from a previous session")
         return False
 
     def _worker(self):
@@ -435,46 +446,54 @@ class ZConnectApp:
                 self._poll()
             except Exception as exc:                    # noqa: BLE001
                 self.log("scan error: %s" % exc)
-            time.sleep(SCAN_INTERVAL)
+            time.sleep(SEEK_INTERVAL)
 
     def _poll(self):
+        """ZLauncher seekAndConnectToPdaNet(), retooled for Linux.
+
+        Passive: never joins or leaves WiFi. It reads whatever link is already
+        up and enforces the tunnel state to match, every tick, regardless of
+        what happened on previous ticks.
+        """
         if self.busy or self.setup_problems:
             return
 
-        if self.manager.is_connected():
-            self.signal_pct = self.scanner.signal_for(self.manager.network)
-            self.available = self.scanner.scan()
-            if self.manager.network and not any(
-                n.ssid == self.manager.network for n in self.available
-            ):
-                self.log("Network disappeared — disconnecting...")
+        # "if this device is the one providing WiFi to something else, it has
+        # no business also trying to become a WiFi client of a different
+        # network at the same time."
+        if self.manager.hotspot_active():
+            if self.manager.connected:
+                self.log("This machine is serving WiFi — tearing down tunnel")
                 self._run_async(self._do_disconnect)
-                return
-            GLib.idle_add(self._set_state, "connected")
             return
 
-        if self.state == "connected":
-            # The tunnel died underneath us; is_connected() already cleaned up.
-            self.started_at = 0
-            self.last_seen = None
-            GLib.idle_add(self._set_state, "idle")
-
-        self.scanner.rescan()
+        on_pdanet, ssid = self.manager.on_pdanet()
+        self.current_ssid = ssid
         self.available = self.scanner.scan()
-        live = self._live()
-        self.signal_pct = live[0].signal if live else None
 
-        if live:
-            best = live[0].ssid
-            if self.config["auto_connect"] and best != self.last_seen:
-                self.log("Found %s (%s%%)" % (best, live[0].signal))
-                self._run_async(self._do_connect, best)
-                return
-            if self.state != "error":
-                GLib.idle_add(self._set_state, "scanning")
+        if on_pdanet:
+            if not self.manager.is_connected():
+                self.log("SSID '%s' matches PdaNet — constructing tunnel" % ssid)
+                self._run_async(self._do_connect, ssid)
+            else:
+                self.signal_pct = self.scanner.signal_for(self.manager.network)
+                GLib.idle_add(self._set_state, "connected")
         else:
-            self.last_seen = None
-            GLib.idle_add(self._set_state, "idle")
+            if self.manager.connected:
+                self.log("SSID '%s' does not match PdaNet — destructing tunnel"
+                         % (ssid or "none"))
+                self._run_async(self._do_disconnect)
+            else:
+                # Off PdaNet and idle: nothing of ours should be installed. If
+                # anything is, it is stranded from a crash, a forced kill or a
+                # suspend, and it is silently breaking the real network. Sweep
+                # it without being asked -- this is the tick that keeps "use
+                # real internet otherwise" true with no intervention.
+                if self.manager.leftovers_present():
+                    self.log("Leftovers found while off PdaNet — cleaning up")
+                    self._run_async(self._do_repair)
+                    return
+                GLib.idle_add(self._set_state, "idle")
 
     def _tick(self):
         """Keep the panel uptime label and the details window ticking."""
