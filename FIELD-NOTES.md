@@ -61,16 +61,16 @@ sudo sysctl -w net.ipv4.conf.all.rp_filter=2
 
 ## First live run — verified working 2026-09-12
 
-Against PdaNet+ on the server phone, SSID `DIRECT-30-moto g power-PdaNet`:
+Against PdaNet+ on the server phone (SSID `DIRECT-xx-<device>-PdaNet`):
 
 ```
-wlp3s0             192.168.49.165/24        joined by NetworkManager
+wlp3s0             192.168.49.x/24          joined by NetworkManager
 tun0               10.0.0.33 peer 10.0.0.1  created by --setup
-route to 1.1.1.1   dev tun0 src 10.0.0.33   general traffic crosses the tunnel
+route to 1.1.1.1   dev tun0                 general traffic crosses the tunnel
 route to 192.168.49.1  dev wlp3s0           bypass holds, no proxy loop
 DNS example.com    172.66.147.243           DNS-over-TCP through the proxy
 https://example.com  200
-egress IP          174.238.99.124           the phone's carrier
+egress IP          <carrier IP>             the phone's carrier, not the local ISP
 ```
 
 Note the tunnel address is **not** Android's `10.1.10.1/32` — `--setup`

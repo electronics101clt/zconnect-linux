@@ -2,6 +2,26 @@
 
 Native Linux tray client for connecting to PdaNet WiFi Direct hotspots.
 
+## Why this exists
+
+There is no official PdaNet desktop client for Linux. The phone's WiFi Direct
+mode exposes only an HTTP CONNECT proxy — no NAT, no IP forwarding — so a Linux
+machine that simply joins the hotspot gets no working connection. The usual
+workarounds are per-app proxy environment variables or a PAC file, neither of
+which covers applications that do not read proxy settings.
+
+The existing third-party Linux clients bridge that gap with **tun2socks +
+iptables**. That works for TCP, but an HTTP CONNECT proxy is TCP-only, and
+tun2socks has no DNS strategy — so UDP DNS has nowhere to go and name
+resolution fails even though the tunnel is up.
+
+This project takes the approach that is already proven on Android: run the
+**same engine the Android client runs** — tun2proxy, pinned to the same version
+— with `--dns over-tcp`, so DNS queries are rewritten as TCP and carried by the
+proxy like any other connection.
+
+It is a tool for using your own phone's connection on your own computer.
+
 ## Overview
 
 A GTK3 tray application (AppIndicator / StatusNotifierItem). When this machine
